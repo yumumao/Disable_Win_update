@@ -1,16 +1,16 @@
 # Disable_Win_update 🛡️
 
-一个用于禁用Windows自动更新的工具集，支持定时自动执行和手动执行。
+一个用于禁用Windows自动更新的工具集，支持定时自动执行和手动执行（仅限中文系统）。
 
 ## 📁 文件说明
 
 | 文件名 | 功能描述 |
 |--------|----------|
-| `disable_update_daily.bat` | 主执行脚本，禁用Windows更新服务和清理更新文件 |
-| `wrapper_script.ps1` | PowerShell包装脚本，处理触发器逻辑和空闲检测 |
-| `disable_windows_update.reg` | 注册表配置文件，包含禁用更新的注册表项 |
 | `0.create_scheduled_task.ps1` | 计划任务创建脚本，设置定时执行 |
+| `disable_update_daily.bat` | 主执行脚本，禁用Windows更新服务和清理更新文件 |
+| `disable_windows_update.reg` | 注册表配置文件，包含禁用更新的注册表项 |
 | `PsExec.exe` | 系统工具，用于高权限执行 |
+| `0.reset_windows_update.bat` | 重置windows系统更新相关服务恢复自动更新 |
 
 ## 🚀 快速开始
 
@@ -22,8 +22,17 @@ disable_update_daily.bat
 
 ### 方法2：创建计划任务（推荐）
 ```powershell
-# 以管理员身份运行PowerShell
+# 正常安装:以管理员身份运行PowerShell
 .\0.create_scheduled_task.ps1
+```
+
+```
+# 安装并测试
+.\0.create_scheduled_task.ps1 -Test
+```
+```
+# 卸载
+.\0.create_scheduled_task.ps1 -Uninstall
 ```
 
 ## ⚙️ 功能特性
@@ -32,15 +41,13 @@ disable_update_daily.bat
 - **注册表配置**：应用禁用自动更新的注册表设置
 - **文件清理**：删除 `$WINDOWS.~BT` 升级文件夹和 `SoftwareDistribution` 更新缓存
 - **智能触发**：支持系统启动、定时（00/03/06/12/18/21点）和手动触发
-- **空闲检测**：在用户空闲3分钟后执行，避免干扰正常使用
 - **日志记录**：详细记录执行过程，自动管理日志大小（超过5万行清理一半）
-- **用户提示**：执行完成后显示友好的提示对话框
 
 ## 📊 触发机制
 
 | 触发类型 | 执行条件 | 说明 |
 |---------|----------|------|
-| 系统启动 | 开机后10分钟内 | 立即执行，确保开机后禁用更新 |
+| 系统启动 | 开机后执行 | 确保开机后禁用更新 |
 | 定时触发 | 每日 00/03/06/12/18/21 点 | 用户空闲3分钟后执行 |
 | 手动执行 | 双击脚本 | 立即执行 |
 
