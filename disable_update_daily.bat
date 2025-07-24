@@ -130,6 +130,88 @@ if exist "C:\Windows\SoftwareDistribution" (
     echo [%date% %time%]  └─SoftwareDistribution文件夹不存在 >> "%LogFile%"
 )
 
+:: 阻止微软电脑管家安装
+echo [%date% %time%] 阻止微软电脑管家>> "%LogFile%"
+
+:: 检查并处理已安装的电脑管家
+set "PCManagerFound=0"
+set "RemovalResult="
+
+for /f "tokens=*" %%i in ('powershell -command "Get-AppxPackage | Where-Object {$_.Name -like '*MicrosoftPCManager*'} | Select-Object -ExpandProperty PackageFullName" 2^>nul') do (
+    set /a PCManagerFound+=1
+    powershell -command "Remove-AppxPackage -Package '%%i'" >nul 2>&1
+    if !errorlevel! equ 0 (
+        set "RemovalResult=移除成功"
+    ) else (
+        set "RemovalResult=移除失败，错误代码: !errorlevel!"
+    )
+)
+
+:: 记录检查结果到同一行
+if !PCManagerFound! equ 0 (
+    echo [%date% %time%]  ├─检查微软电脑管家安装状态：未安装 >> "%LogFile%"
+) else (
+    echo [%date% %time%]  ├─检查微软电脑管家安装状态：已安装→!RemovalResult! >> "%LogFile%"
+)
+
+:: Edge阻止策略配置
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v "ComponentUpdatesEnabled" /t REG_DWORD /d 0 /f >nul 2>&1
+if !errorlevel! equ 0 (
+    echo [%date% %time%]  ├─配置注册表阻止电脑管家通过Edge安装：配置成功 >> "%LogFile%"
+) else (
+    echo [%date% %time%]  ├─配置注册表阻止电脑管家通过Edge安装：配置失败，错误代码: !errorlevel! >> "%LogFile%"
+)
+
+:: 应用商店阻止策略配置
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\Microsoft.MicrosoftPCManager_8wekyb3d8bbwe" /f >nul 2>&1
+if !errorlevel! equ 0 (
+    echo [%date% %time%]  ├─配置应用商店阻止策略：配置成功 >> "%LogFile%"
+) else (
+    echo [%date% %time%]  ├─配置应用商店阻止策略：配置失败，错误代码: !errorlevel! >> "%LogFile%"
+)
+
+:: EdgeUpdate阻止策略配置
+reg add "HKLM\SOFTWARE\Policies\Microsoft\EdgeUpdate" /v "InstallDefault" /t REG_DWORD /d 0 /f >nul 2>&1
+if !errorlevel! equ 0 (
+    echo [%date% %time%]  ├─配置EdgeUpdate安装策略：配置成功 >> "%LogFile%"
+) else (
+    echo [%date% %time%]  ├─配置EdgeUpdate安装策略：配置失败，错误代码: !errorlevel! >> "%LogFile%"
+)
+
+:: 检查并禁用相关服务
+set "ServiceFound=0"
+set "ServiceResult="
+
+for %%s in ("Microsoft PC Manager Service", "PCManager") do (
+    sc query %%s >nul 2>&1
+    if !errorlevel! equ 0 (
+        set /a ServiceFound+=1
+        sc config %%s start= disabled >nul 2>&1
+        if !errorlevel! equ 0 (
+            if defined ServiceResult (
+                set "ServiceResult=!ServiceResult!；%%s禁用成功"
+            ) else (
+                set "ServiceResult=%%s禁用成功"
+            )
+        ) else (
+            if defined ServiceResult (
+                set "ServiceResult=!ServiceResult!；%%s禁用失败，错误代码: !errorlevel!"
+            ) else (
+                set "ServiceResult=%%s禁用失败，错误代码: !errorlevel!"
+            )
+        )
+    )
+)
+
+:: 记录服务检查结果到同一行
+if !ServiceFound! equ 0 (
+    echo [%date% %time%]  └─检查并禁用电脑管家相关服务：未发现相关服务 >> "%LogFile%"
+) else (
+    echo [%date% %time%]  └─检查并禁用电脑管家相关服务：!ServiceResult! >> "%LogFile%"
+)
+
+:: echo [%date% %time%] ───────电脑管家阻止完成─────── >> "%LogFile%"
+
 :: 显示完成消息
 :: set "UserLoggedIn="
 :: for /f "tokens=*" %%i in ('query user 2^>nul ^| find "Active"') do (
