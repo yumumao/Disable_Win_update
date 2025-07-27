@@ -137,13 +137,53 @@ echo [%date% %time%] 阻止微软电脑管家>> "%LogFile%"
 set "PCManagerFound=0"
 set "RemovalResult="
 
-for /f "tokens=*" %%i in ('powershell -command "Get-AppxPackage | Where-Object {$_.Name -like '*MicrosoftPCManager*'} | Select-Object -ExpandProperty PackageFullName" 2^>nul') do (
+for /f "tokens=*" %%i in ('powershell -command "Get-AppxPackage -AllUsers | Where-Object {$_.Name -eq 'Microsoft.MicrosoftPCManager'} | Select-Object -ExpandProperty PackageFullName" 2^>nul') do (
     set /a PCManagerFound+=1
+    echo [%date% %time%]  ├─发现电脑管家包：%%i >> "%LogFile%"
+    
+    :: 尝试多种删除方法
+    set "DeleteSuccess=0"
+    
+    :: 方法1：标准删除
     powershell -command "Remove-AppxPackage -Package '%%i'" >nul 2>&1
     if !errorlevel! equ 0 (
-        set "RemovalResult=移除成功"
+        set "DeleteSuccess=1"
+        set "RemovalResult=标准删除成功"
     ) else (
-        set "RemovalResult=移除失败，错误代码: !errorlevel!"
+        echo [%date% %time%]  ├─标准删除失败，错误代码: !errorlevel!，尝试强制删除 >> "%LogFile%"
+        
+        :: 方法2：强制删除当前用户
+        powershell -command "Remove-AppxPackage -Package '%%i' -User $env:USERNAME" >nul 2>&1
+        if !errorlevel! equ 0 (
+            set "DeleteSuccess=1"
+            set "RemovalResult=用户强制删除成功"
+        ) else (
+            :: 方法3：所有用户强制删除
+            powershell -command "Remove-AppxPackage -Package '%%i' -AllUsers" >nul 2>&1
+            if !errorlevel! equ 0 (
+                set "DeleteSuccess=1"
+                set "RemovalResult=全局强制删除成功"
+            ) else (
+                :: 方法4：使用DISM删除
+                dism /online /remove-provisionedappxpackage /packagename:%%i >nul 2>&1
+                if !errorlevel! equ 0 (
+                    set "DeleteSuccess=1"
+                    set "RemovalResult=DISM删除成功"
+                ) else (
+                    set "RemovalResult=所有删除方法均失败"
+                )
+            )
+        )
+    )
+    
+    :: 验证删除结果
+    powershell -command "Get-AppxPackage -AllUsers | Where-Object {$_.PackageFullName -eq '%%i'}" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [%date% %time%]  ├─删除验证：包已不存在，删除成功 >> "%LogFile%"
+        set "RemovalResult=!RemovalResult!（验证成功）"
+    ) else (
+        echo [%date% %time%]  ├─删除验证：包仍然存在，删除失败 >> "%LogFile%"
+        set "RemovalResult=!RemovalResult!（验证失败-包仍存在）"
     )
 )
 
@@ -151,15 +191,80 @@ for /f "tokens=*" %%i in ('powershell -command "Get-AppxPackage | Where-Object {
 if !PCManagerFound! equ 0 (
     echo [%date% %time%]  ├─检查微软电脑管家安装状态：未安装 >> "%LogFile%"
 ) else (
-    echo [%date% %time%]  ├─检查微软电脑管家安装状态：已安装→!RemovalResult! >> "%LogFile%"
+    echo [%date% %time%]  ├─检查微软电脑管家安装状态：已安装!PCManagerFound!个包→!RemovalResult! >> "%LogFile%"
 )
 
-:: Edge阻止策略配置
-reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v "ComponentUpdatesEnabled" /t REG_DWORD /d 0 /f >nul 2>&1
+:: 检查常见安装路径
+set "FolderFound=0"
+set "FolderResult="
+
+for %%p in ("%ProgramFiles%\Microsoft PC Manager", "%ProgramFiles(x86)%\Microsoft PC Manager", "%LocalAppData%\Microsoft\PCManager") do (
+    if exist "%%p" (
+        set /a FolderFound+=1
+        rd /s /q "%%p" >nul 2>&1
+        if not exist "%%p" (
+            if defined FolderResult (
+                set "FolderResult=!FolderResult!；%%p删除成功"
+            ) else (
+                set "FolderResult=发现程序文件夹：%%p→删除成功"
+            )
+        ) else (
+            if defined FolderResult (
+                set "FolderResult=!FolderResult!；%%p删除失败"
+            ) else (
+                set "FolderResult=发现程序文件夹：%%p→删除失败"
+            )
+        )
+    )
+)
+
+:: 额外的清理措施
+set "ProvisionResult="
+set "RegistryResult="
+set "FolderNotFoundResult="
+
+:: 如果没有发现程序文件夹，设置结果用于合并输出
+if !FolderFound! equ 0 (
+    set "FolderNotFoundResult=未发现程序文件夹安装"
+)
+
+:: 清理预安装包
+powershell -command "Get-AppxProvisionedPackage -Online | Where-Object {$_.DisplayName -like '*MicrosoftPCManager*'} | Remove-AppxProvisionedPackage -Online" >nul 2>&1
 if !errorlevel! equ 0 (
-    echo [%date% %time%]  ├─配置注册表阻止电脑管家通过Edge安装：配置成功 >> "%LogFile%"
+    set "ProvisionResult=预安装包清理成功"
 ) else (
-    echo [%date% %time%]  ├─配置注册表阻止电脑管家通过Edge安装：配置失败，错误代码: !errorlevel! >> "%LogFile%"
+    set "ProvisionResult=预安装包无需清理或失败"
+)
+
+:: 清理注册表残留
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" /s 2>nul | find /i "PCManager" >nul 2>&1
+if !errorlevel! equ 0 (
+    set "RegistryResult=发现并清理注册表残留"
+    for /f "tokens=*" %%k in ('reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" /s 2^>nul ^| find /i "PCManager"') do (
+        reg delete "%%k" /f >nul 2>&1
+    )
+) else (
+    set "RegistryResult=未发现注册表残留"
+)
+
+:: 合并输出到一行
+if !FolderFound! equ 0 (
+    echo [%date% %time%]  ├─执行额外清理措施：!FolderNotFoundResult!；!ProvisionResult!；!RegistryResult! >> "%LogFile%"
+) else (
+    echo [%date% %time%]  ├─!FolderResult! >> "%LogFile%"
+    echo [%date% %time%]  ├─执行额外清理措施：!ProvisionResult!；!RegistryResult! >> "%LogFile%"
+)
+
+:: 阻止消费者功能和应用商店自动下载配置
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent" /v "DisableWindowsConsumerFeatures" /t REG_DWORD /d 1 /f >nul 2>&1
+set "reg_error1=!errorlevel!"
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsStore\WindowsUpdate" /v "AutoDownload" /t REG_DWORD /d 2 /f >nul 2>&1
+set "reg_error2=!errorlevel!"
+
+if !reg_error1! equ 0 if !reg_error2! equ 0 (
+    echo [%date% %time%]  ├─配置阻止消费者功能和应用商店自动下载：配置成功 >> "%LogFile%"
+) else (
+    echo [%date% %time%]  ├─配置阻止消费者功能和应用商店自动下载：配置失败，错误代码: !reg_error1!/!reg_error2! >> "%LogFile%"
 )
 
 :: 应用商店阻止策略配置
