@@ -16,16 +16,8 @@ Windows Registry Editor Version 5.00
 "DeferFeatureUpdatesPeriodInDays"=dword:00000169
 "BranchReadinessLevel"=dword:00000020
 
-; 禁用Windows Update Medic Service
-[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc]
-"Start"=dword:00000004
-
 ; 禁用Update Orchestrator Service  
 [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\UsoSvc]
-"Start"=dword:00000004
-
-; 禁用配送优化服务
-[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\DoSvc]
 "Start"=dword:00000004
 
 ; 禁用Windows推送通知服务

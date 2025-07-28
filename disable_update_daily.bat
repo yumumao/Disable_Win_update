@@ -45,19 +45,15 @@ if "%CurrentHour%"=="21" set "TriggerInfo=触发器21"
 echo ================================================ >> "%LogFile%"
 echo [%date% %time%] %TriggerInfo%-开始执行禁用Windows更新脚本 >> "%LogFile%"
 
-:: 应用注册表设置
-echo [%date% %time%] 开始应用注册表设置 >> "%LogFile%"
-regedit /s "%~dp0disable_windows_update.reg"
-if !errorlevel! equ 0 (
-    echo [%date% %time%]  └─注册表设置应用成功 >> "%LogFile%"
-) else (
-    echo [%date% %time%]  └─注册表设置应用失败，错误代码: !errorlevel! >> "%LogFile%"
-)
-    
-:: 停止和禁用服务
+:: 停止和禁用Windows更新相关服务
 echo [%date% %time%] 停止和禁用Windows更新相关服务 >> "%LogFile%"
 
-for %%i in (wuauserv, UsoSvc, WaaSMedicSvc) do (
+:: 先尝试停止关键服务
+net stop WaaSMedicSvc >nul 2>&1
+net stop DoSvc >nul 2>&1
+net stop WpnService >nul 2>&1
+
+for %%i in (wuauserv, UsoSvc, WaaSMedicSvc, DoSvc, WpnService) do (
     set "ServiceResult="
     
     :: 停止服务
@@ -91,17 +87,198 @@ for %%i in (wuauserv, UsoSvc, WaaSMedicSvc) do (
     sc failure %%i reset= 0 actions= "" >nul 2>&1
 )
 
-:: 通过注册表强制禁用WaaSMedicSvc
-echo [%date% %time%]  ├─通过注册表强制禁用WaaSMedicSvc >> "%LogFile%"
-reg add "HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc" /v Start /t REG_DWORD /d 4 /f >nul 2>&1
-if !errorlevel! equ 0 (
-    echo [%date% %time%]  └─WaaSMedicSvc注册表禁用成功 >> "%LogFile%"
+echo [%date% %time%]  └─服务层面处理完成→将通过注册表确保设置生效 >> "%LogFile%"
+
+:: 在导入注册表前先读取当前值
+echo [%date% %time%] 读取导入前注册表状态 >> "%LogFile%"
+
+:: 记录导入前的关键注册表值
+set "BeforeWuauserv="
+set "BeforeUsoSvc="
+set "BeforeWaaSMedicSvc="
+set "BeforeDoSvc="
+set "BeforeWpnService="
+set "BeforeNoAutoUpdate="
+set "BeforeDeferFeature="
+set "BeforeNoAutoReboot="
+
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\wuauserv" /v Start 2^>nul ^| find "Start" 2^>nul') do set "BeforeWuauserv=%%a"
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\UsoSvc" /v Start 2^>nul ^| find "Start" 2^>nul') do set "BeforeUsoSvc=%%a"
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc" /v Start 2^>nul ^| find "Start" 2^>nul') do set "BeforeWaaSMedicSvc=%%a"
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\DoSvc" /v Start 2^>nul ^| find "Start" 2^>nul') do set "BeforeDoSvc=%%a"
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\WpnService" /v Start 2^>nul ^| find "Start" 2^>nul') do set "BeforeWpnService=%%a"
+for /f "tokens=3" %%a in ('reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoUpdate 2^>nul ^| find "NoAutoUpdate" 2^>nul') do set "BeforeNoAutoUpdate=%%a"
+for /f "tokens=3" %%a in ('reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" /v DeferFeatureUpdates 2^>nul ^| find "DeferFeatureUpdates" 2^>nul') do set "BeforeDeferFeature=%%a"
+for /f "tokens=3" %%a in ('reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoRebootWithLoggedOnUsers 2^>nul ^| find "NoAutoRebootWithLoggedOnUsers" 2^>nul') do set "BeforeNoAutoReboot=%%a"
+
+:: 应用注册表设置（统一处理）
+echo [%date% %time%] 应用注册表设置 >> "%LogFile%"
+:: 导入注册表（这已经包含了所有必要的设置）
+regedit /s "%~dp0disable_windows_update.reg" >nul 2>&1
+set "reg_import_error=!errorlevel!"
+
+:: 检查regedit的返回码
+if !reg_import_error! equ 0 (
+    echo [%date% %time%]  ├─注册表文件导入命令执行成功 >> "%LogFile%"
 ) else (
-    echo [%date% %time%]  └─WaaSMedicSvc注册表禁用失败, 错误代码: !errorlevel! >> "%LogFile%"
+    echo [%date% %time%]  ├─注册表文件导入命令执行失败，错误代码: !reg_import_error! >> "%LogFile%"
 )
 
-:: 设置失败操作为空
-reg add "HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc" /v FailureActions /t REG_BINARY /d 000000000000000000000000030000001400000000000000c0d4010000000000e09304000000000000000000 /f >nul 2>&1
+:: 导入后读取当前值并与导入前对比
+set "FailedCount=0"
+set "ChangedCount=0"
+set "Results[1]="
+set "Results[2]="
+set "Results[3]="
+set "Results[4]="
+set "Results[5]="
+set "Results[6]="
+set "Results[7]="
+set "Results[8]="
+set "Results[9]="
+
+:: 检查wuauserv (Windows Update服务)
+set "AfterWuauserv="
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\wuauserv" /v Start 2^>nul ^| find "Start" 2^>nul') do set "AfterWuauserv=%%a"
+if "!AfterWuauserv!"=="0x4" (
+    set "Results[1]=禁用Windows Update(wuauserv)[OK]"
+    if not "!BeforeWuauserv!"=="0x4" set /a ChangedCount+=1
+) else (
+    set "Results[1]=禁用Windows Update(wuauserv)[FAIL-值:!AfterWuauserv!]"
+    set /a FailedCount+=1
+)
+
+:: 检查UsoSvc (更新编排器服务)
+set "AfterUsoSvc="
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\UsoSvc" /v Start 2^>nul ^| find "Start" 2^>nul') do set "AfterUsoSvc=%%a"
+if "!AfterUsoSvc!"=="0x4" (
+    set "Results[2]=禁用更新编排器(UsoSvc)[OK]"
+    if not "!BeforeUsoSvc!"=="0x4" set /a ChangedCount+=1
+) else (
+    set "Results[2]=禁用更新编排器(UsoSvc)[FAIL-值:!AfterUsoSvc!]"
+    set /a FailedCount+=1
+)
+
+:: 检查WaaSMedicSvc (更新修复服务)
+set "AfterWaaSMedicSvc="
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc" /v Start 2^>nul ^| find "Start" 2^>nul') do set "AfterWaaSMedicSvc=%%a"
+if "!AfterWaaSMedicSvc!"=="0x4" (
+    set "Results[3]=禁用更新修复(WaaSMedicSvc)[OK]"
+    if not "!BeforeWaaSMedicSvc!"=="0x4" set /a ChangedCount+=1
+) else (
+    set "Results[3]=禁用更新修复(WaaSMedicSvc)[FAIL-值:!AfterWaaSMedicSvc!]"
+    set /a FailedCount+=1
+)
+
+:: 检查DoSvc (配送优化服务)
+set "AfterDoSvc="
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\DoSvc" /v Start 2^>nul ^| find "Start" 2^>nul') do set "AfterDoSvc=%%a"
+if "!AfterDoSvc!"=="0x4" (
+    set "Results[4]=禁用配送优化(DoSvc)[OK]"
+    if not "!BeforeDoSvc!"=="0x4" set /a ChangedCount+=1
+) else (
+    set "Results[4]=禁用配送优化(DoSvc)[FAIL-值:!AfterDoSvc!]"
+    set /a FailedCount+=1
+)
+
+:: 检查WpnService (推送通知服务)
+set "AfterWpnService="
+for /f "tokens=3" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Services\WpnService" /v Start 2^>nul ^| find "Start" 2^>nul') do set "AfterWpnService=%%a"
+if "!AfterWpnService!"=="0x4" (
+    set "Results[5]=禁用推送通知(WpnService)[OK]"
+    if not "!BeforeWpnService!"=="0x4" set /a ChangedCount+=1
+) else (
+    set "Results[5]=禁用推送通知(WpnService)[FAIL-值:!AfterWpnService!]"
+    set /a FailedCount+=1
+)
+
+:: 检查自动更新策略
+set "AfterNoAutoUpdate="
+for /f "tokens=3" %%a in ('reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoUpdate 2^>nul ^| find "NoAutoUpdate" 2^>nul') do set "AfterNoAutoUpdate=%%a"
+if "!AfterNoAutoUpdate!"=="0x1" (
+    set "Results[6]=禁用自动更新(NoAutoUpdate)[OK]"
+    if not "!BeforeNoAutoUpdate!"=="0x1" set /a ChangedCount+=1
+) else (
+    set "Results[6]=禁用自动更新(NoAutoUpdate)[FAIL-值:!AfterNoAutoUpdate!]"
+    set /a FailedCount+=1
+)
+
+:: 检查功能更新延迟
+set "AfterDeferFeature="
+for /f "tokens=3" %%a in ('reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" /v DeferFeatureUpdates 2^>nul ^| find "DeferFeatureUpdates" 2^>nul') do set "AfterDeferFeature=%%a"
+if "!AfterDeferFeature!"=="0x1" (
+    set "Results[7]=延迟功能更新(DeferFeature)[OK]"
+    if not "!BeforeDeferFeature!"=="0x1" set /a ChangedCount+=1
+) else (
+    set "Results[7]=延迟功能更新(DeferFeature)[FAIL-值:!AfterDeferFeature!]"
+    set /a FailedCount+=1
+)
+
+:: 检查重启策略
+set "AfterNoAutoReboot="
+for /f "tokens=3" %%a in ('reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoRebootWithLoggedOnUsers 2^>nul ^| find "NoAutoRebootWithLoggedOnUsers" 2^>nul') do set "AfterNoAutoReboot=%%a"
+if "!AfterNoAutoReboot!"=="0x1" (
+    set "Results[8]=禁止强制重启(NoAutoReboot)[OK]"
+    if not "!BeforeNoAutoReboot!"=="0x1" set /a ChangedCount+=1
+) else (
+    set "Results[8]=禁止强制重启(NoAutoReboot)[FAIL-值:!AfterNoAutoReboot!]"
+    set /a FailedCount+=1
+)
+
+:: 检查FailureActions设置 - 完全修复版本
+reg query "HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc" /v FailureActions >nul 2>&1
+set "failure_check_error=!errorlevel!"
+if !failure_check_error! equ 0 (
+    set "Results[9]=禁用修复服务自启动(FailureActions)[OK]"
+) else (
+    :: 如果不存在，尝试重新设置
+    reg add "HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc" /v FailureActions /t REG_BINARY /d 000000000000000000000000030000001400000000000000c0d4010000000000e09304000000000000000000 /f >nul 2>&1
+    set "failure_add_error=!errorlevel!"
+    if !failure_add_error! equ 0 (
+        set "Results[9]=禁用修复服务自启动(FailureActions)[OK-重新设置]"
+        set /a ChangedCount+=1
+    ) else (
+        set "Results[9]=禁用修复服务自启动(FailureActions)[FAIL-设置失败]"
+        set /a FailedCount+=1
+    )
+)
+
+:: 计算成功数 - 在所有检查完成后统一计算
+set /a SuccessCount=9-!FailedCount!
+
+:: 确保只输出一行结果 - 使用明确的单一判断路径
+if !FailedCount! equ 0 (
+    :: 完全成功的情况
+    if !ChangedCount! gtr 0 (
+        echo [%date% %time%] 应用注册表设置：全部成功(9/9项成功，!ChangedCount!项实际变更) >> "%LogFile%"
+    ) else (
+        echo [%date% %time%] 应用注册表设置：全部成功(9/9项成功，0项实际变更-可能已设置) >> "%LogFile%"
+    )
+) else (
+    :: 部分成功的情况
+    if !ChangedCount! gtr 0 (
+        echo [%date% %time%] 应用注册表设置：部分成功(!SuccessCount!/9项成功，!ChangedCount!项实际变更) >> "%LogFile%"
+    ) else (
+        echo [%date% %time%] 应用注册表设置：部分成功(!SuccessCount!/9项成功，0项实际变更-可能已设置) >> "%LogFile%"
+    )
+)
+
+:: 输出详细结果（每行2项）
+echo [%date% %time%]  ├─!Results[1]!；!Results[2]! >> "%LogFile%"
+echo [%date% %time%]  ├─!Results[3]!；!Results[4]! >> "%LogFile%"
+echo [%date% %time%]  ├─!Results[5]!；!Results[6]! >> "%LogFile%"
+echo [%date% %time%]  ├─!Results[7]!；!Results[8]! >> "%LogFile%"
+echo [%date% %time%]  └─!Results[9]! >> "%LogFile%"
+
+:: 如果有特定的失败项目，输出变更对比信息
+if !FailedCount! gtr 0 (
+    echo [%date% %time%] 详细变更对比： >> "%LogFile%"
+    if not "!BeforeWaaSMedicSvc!"=="!AfterWaaSMedicSvc!" echo [%date% %time%]  ├─WaaSMedicSvc: !BeforeWaaSMedicSvc! → !AfterWaaSMedicSvc! >> "%LogFile%"
+    if not "!BeforeDoSvc!"=="!AfterDoSvc!" echo [%date% %time%]  ├─DoSvc: !BeforeDoSvc! → !AfterDoSvc! >> "%LogFile%"
+    if not "!BeforeWuauserv!"=="!AfterWuauserv!" echo [%date% %time%]  ├─wuauserv: !BeforeWuauserv! → !AfterWuauserv! >> "%LogFile%"
+    if not "!BeforeUsoSvc!"=="!AfterUsoSvc!" echo [%date% %time%]  ├─UsoSvc: !BeforeUsoSvc! → !AfterUsoSvc! >> "%LogFile%"
+    if not "!BeforeWpnService!"=="!AfterWpnService!" echo [%date% %time%]  └─WpnService: !BeforeWpnService! → !AfterWpnService! >> "%LogFile%"
+)
 
 :: 删除升级文件夹
 if exist "C:\$WINDOWS.~BT" (
@@ -314,24 +491,6 @@ if !ServiceFound! equ 0 (
 ) else (
     echo [%date% %time%]  └─检查并禁用电脑管家相关服务：!ServiceResult! >> "%LogFile%"
 )
-
-:: echo [%date% %time%] ───────电脑管家阻止完成─────── >> "%LogFile%"
-
-:: 显示完成消息
-:: set "UserLoggedIn="
-:: for /f "tokens=*" %%i in ('query user 2^>nul ^| find "Active"') do (
-::     set "UserLoggedIn=1"
-::     goto :FoundUser
-:: )
-:: :FoundUser
-:: 
-:: if defined UserLoggedIn (
-::     echo [%date% %time%] 发现活动用户会话，显示完成提示 >> "%LogFile%"
-::     powershell -WindowStyle Hidden -Command "try { Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('已禁止Windows更新`n执行时间: %date% %time%`n启动方式: %TriggerInfo%', '任务完成', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) } catch { exit 0 }" >nul 2>&1
-::     echo [%date% %time%] 已向用户显示完成提示 >> "%LogFile%"
-:: ) else (
-::     echo [%date% %time%] 未发现活动用户会话，跳过UI提示 >> "%LogFile%"
-:: )
 
 echo [%date% %time%] 脚本执行完成 >> "%LogFile%"
 
