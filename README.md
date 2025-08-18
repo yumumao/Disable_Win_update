@@ -1,16 +1,53 @@
 # Disable_Win_update 🛡️
 
-一个用于禁用Windows自动更新和微软电脑管家安装的工具集，支持定时自动执行和手动执行（仅限中文系统）。
+一个用于禁用Windows自动更新、微软电脑管家和游戏功能的工具集，支持定时自动执行和手动执行，提供多种配置版本适应不同需求。
 
 ## 📁 文件说明
 
 | 文件名 | 功能描述 |
 |--------|----------|
 | `0.create_scheduled_task.ps1` | 计划任务创建脚本，设置定时执行 |
-| `disable_update_daily.bat` | 主执行脚本，禁用Windows更新服务和清理更新文件 |
-| `disable_windows_update.reg` | 注册表配置文件，包含禁用更新的注册表项 |
+| `disable_update_daily.bat` | 主执行脚本，禁用服务、应用注册表配置、清理文件 |
+| `disable_windows_update.reg` | **当前使用的注册表配置文件** |
+| `disable_windows_update-mini.reg` | 精简版注册表配置（仅禁用Windows更新） |
+| `disable_windows_update-nogame.reg` | 无游戏版注册表配置（Windows更新+电脑管家） |
 | `PsExec.exe` | 系统工具，用于高权限执行 |
-| `0.reset_windows_update.bat` | 重置windows系统更新相关服务恢复自动更新 |
+| `0.reset_windows_update.bat` | 重置Windows系统更新相关服务恢复自动更新 |
+
+## 🔧 注册表配置版本
+
+### 完整版 (disable_windows_update.reg)
+- ✅ 禁用Windows自动更新
+- ✅ 阻止微软电脑管家安装
+- ✅ 禁用Xbox Game Bar和游戏功能
+- ✅ 阻止消费者功能和应用商店自动下载
+- ✅ 禁用相关系统服务
+
+### 精简版 (disable_windows_update-mini.reg)
+- ✅ 禁用Windows自动更新
+- ✅ 基本的更新阻止策略
+- ❌ 不包含电脑管家阻止
+- ❌ 不包含游戏功能禁用
+
+### 无游戏版 (disable_windows_update-nogame.reg)
+- ✅ 禁用Windows自动更新
+- ✅ 阻止微软电脑管家安装
+- ✅ 阻止消费者功能和应用商店自动下载
+- ❌ 不包含游戏功能禁用
+
+## 📝 版本选择指南
+
+| 使用场景 | 推荐版本 | 说明 |
+|---------|----------|------|
+| 普通用户，全面禁用 | 完整版 | 最全面的功能，适合大多数用户 |
+| 游戏用户 | 无游戏版 | 保留游戏功能，阻止更新和电脑管家 |
+| 追求兼容性 | 精简版 | 最小化修改，只禁用Windows更新 |
+| 企业环境 | 精简版或无游戏版 | 根据企业策略选择 |
+
+### 🔄 版本切换方法
+1. 备份当前的 `disable_windows_update.reg`
+2. 将需要的版本文件重命名为 `disable_windows_update.reg`
+3. 重新运行脚本或等待定时任务执行
 
 ## 🚀 快速开始
 
@@ -25,7 +62,6 @@ disable_update_daily.bat
 # 正常安装:以管理员身份运行PowerShell
 .\0.create_scheduled_task.ps1
 ```
-
 ```
 # 安装并测试
 .\0.create_scheduled_task.ps1 -Test
@@ -63,6 +99,8 @@ disable_update_daily.bat
 2. **杀毒软件**：可能被误报，请添加到白名单
 3. **系统兼容**：适用于 Windows 10/11
 4. **备份建议**：首次使用前建议创建系统还原点
+5. **版本选择**：根据需求选择合适的注册表配置版本
+6. **游戏用户**：如需使用Xbox相关功能，请使用无游戏版配置
 
 ## 🔧 故障排除
 
@@ -74,7 +112,23 @@ disable_update_daily.bat
 - `1062` = 服务未启动
 
 ### 检查日志
-查看 `update_disable_log.txt` 了解详细执行情况和错误信息。
+1. 查看 `update_disable_log.txt` 了解详细执行情况和错误信息。
+2. 确认注册表配置文件版本是否正确
+3. 检查是否以管理员权限运行
+4. 确认杀毒软件是否阻止执行
+
+### 版本相关问题
+- **功能不全**：检查是否使用了精简版配置
+- **游戏问题**：游戏用户请切换到无游戏版配置
+- **兼容性问题**：尝试使用精简版配置
+
+## 🔄 恢复系统更新
+
+如需恢复Windows自动更新功能：
+```cmd
+# 以管理员身份运行
+0.reset_windows_update.bat
+```
 
 ## 📞 支持
 
@@ -82,4 +136,4 @@ disable_update_daily.bat
 1. 是否以管理员权限运行
 2. 杀毒软件是否阻止执行
 3. 查看日志文件了解具体错误
-```
+4. 尝试切换到精简版配置测试兼容性
