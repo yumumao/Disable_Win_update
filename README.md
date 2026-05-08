@@ -1,5 +1,7 @@
 # Disable_Win_update 🛡️
 
+> 🌏 [ENGLISH README](./README_EN.md)
+
 一个用于禁用Windows自动更新、微软电脑管家和游戏功能的工具集，支持定时自动执行和手动执行，提供多种配置版本适应不同需求。
 
 ## 📁 文件说明
