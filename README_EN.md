@@ -96,6 +96,9 @@ disable_update_daily.bat
 - **Contents**: execution time, trigger type, operation results, and error codes.
 - **Management**: once the log exceeds 50,000 lines, it's automatically trimmed to keep the most recent 25,000.
 
+## 🖼 Screenshots
+![Log Screenshot](./screenshot/screenshot2.png)
+
 ## ⚠️ Important Notes
 
 - **Administrator privileges**: all operations require admin rights.
